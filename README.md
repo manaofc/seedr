@@ -14,7 +14,7 @@ npm install axios form-data
 ## Quick Start
 
 ```js
-const Seedr = require("./index.js"); // or "seedr" if published
+const Seedr = require("seedr"); // or "seedr" if published
 const seedr = new Seedr();
 
 // Method 1: email + password (short lived token)
@@ -54,7 +54,7 @@ await seedr.addToken("your_access_token", "optional_refresh_token");
 ## Example
 
 ```js
-const Seedr = require("./index.js");
+const Seedr = require("seedr");
 const seedr = new Seedr();
 
 (async () => {
