@@ -1,120 +1,99 @@
-# Seedr
-![seedr.cc](https://user-images.githubusercontent.com/17960677/97034774-0b55bf00-1583-11eb-9529-807646a216de.png)  
-  
-    
+# Seedr.cc Unofficial API Wrapper
 
-Unofficial API wrapper for seedr.cc
+Fixed & improved version of the original `seedr` package.
+
+**Endpoints still work** (as of Nov 2026). Seedr has not removed the old Chrome / XBMC OAuth endpoints.
+
+## Install
+
+```bash
+npm install axios form-data
+# or just use the files in this folder
+```
+
+## Quick Start
+
+```js
+const Seedr = require("./index.js"); // or "seedr" if published
+const seedr = new Seedr();
+
+// Method 1: email + password (short lived token)
+await seedr.login("you@email.com", "password");
+
+// Method 2: Device code (long lived ~1 year token) — recommended
+const codes = await seedr.getDeviceCode();
+// → Go to https://www.seedr.cc/devices and enter the user_code
+// After authorizing:
+await seedr.getToken(codes.device_code);
+
+// Method 3: reuse old token
+await seedr.addToken("your_access_token", "optional_refresh_token");
+```
+
+## Main Methods
+
+| Method | Description |
+|--------|-------------|
+| `login(email, pass)` | Login with password |
+| `getDeviceCode()` | Start device auth flow |
+| `getToken(device_code)` | Finish device auth |
+| `addToken(token, refresh?)` | Use existing token |
+| `refreshAccessToken()` | Refresh expired token |
+| `addMagnet(magnet)` | Add magnet link |
+| `getVideos()` | List all video files (original behaviour) |
+| `getContents()` | Root folders + files + space |
+| `getFolder(id)` | Get one folder |
+| `getFile(id)` | Get direct download URL for a **file** |
+| `getDownloadUrl(id)` | Same as above (convenience) |
+| `createArchive(folderId)` | Create ZIP of folder → returns `archive_url` |
+| `getArchiveUrl(folderId)` | Convenience for archive download link |
+| `deleteFile(id)` | Delete file |
+| `deleteFolder(id)` | Delete folder |
+| `rename(id, name, type)` | Rename file or folder |
+
 ## Example
-The Following Code snipet will help you understand how to use this.
 
 ```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.login("email@example.com","password");
-await seedr.addMagnet("magnet_link");
-// Starts downloading, wait till that happens
-var contents = await seedr.getVideos();
-// An object containing list of all files and folders
+const Seedr = require("./index.js");
+const seedr = new Seedr();
+
+(async () => {
+  await seedr.login("email@example.com", "password");
+
+  // Add torrent
+  const add = await seedr.addMagnet("magnet:?xt=urn:btih:...");
+  console.log(add);
+
+  // List videos
+  const videos = await seedr.getVideos();
+  console.log(videos);
+
+  // Get direct download link for a single file
+  if (videos[0]?.[0]) {
+    const file = await seedr.getFile(videos[0][0].id);
+    console.log("File download:", file.url);
+  }
+
+  // Get archive (ZIP) download link for a whole folder
+  // → https://www.seedr.cc/download/archive/...?token=...&exp=...
+  const archive = await seedr.createArchive(videos[0][0].fid);
+  console.log("Archive link:", archive.archive_url);
+})();
 ```
 
-## Documentation
+## Notes
 
-### Logging in
+- Password login uses `client_id=seedr_chrome`
+- Device code uses `client_id=seedr_xbmc` (longer token lifetime)
+- Token refresh is supported if you keep the `refresh_token`
+- Official Seedr REST API (Basic Auth / new OAuth) is separate and mostly Premium-only
+- This wrapper uses the same unofficial endpoints that the old Chrome extension & Kodi addon used — they still respond correctly in 2026
 
-There are two ways to login, that is,
+## Changelog (1.2.0)
 
-* using username and password
-* using device code
-
-the username and password method returns a token with short lifetime while device id method returns a 1 year lifetime token.
-
-```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.login("email@example.com","password");
-```
-
-![Seedr.cc Devices](https://user-images.githubusercontent.com/17960677/97114270-95359180-1715-11eb-91f1-59273a488ca5.png)
-
-```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.getDeviceCode();
-// prints a device code and user code, go to seedr.cc/devices and add user code
-// after adding user code, pass the device code parameter to getToken function
-
-await seedr.getToken("device_code");
-// returns a token with 1 year lifetime
-```
-
-** using an old token to log in directly **
-
-```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.addToken("token");
-```
-### Adding magnet link
-
-Magnet link can be added using `addMagnet` function
-
-```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.login("email@example.com","password");
-
-await seedr.addMagnet("magnet_link");
-
-// adds a magnet link, wait till it downloads
-```
-
-### Getting contents
-
-To get contents (only videos), use the `getVideos` function
-
-```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.login("email@example.com","password");
-
-await seedr.getVideos();
-
-/*
-Prints Array of Arrays with file data
-
-[
-  [
-    {
-      "fid": 124291671, // folder id
-      "id": 636235280, // file id
-      "name": "File Name"
-    },
-    ...
-  ],
-  ...
-]
-*/
-```
-### Deleting contents
-
-To delete Folders use `deleteFolder` function and to delete files, use `deleteFiles` function
-
-```js
-var Seedr = require("seedr");
-var seedr = new Seedr();
-await seedr.login("email@example.com","password");
-
-await seedr.deleteFile("file_id");
-
-await seedr.deleteFolder("folder_id");
-```
-
-## Contributing
-
-Thank you for your interest in contributing, If you feel like there's something missing or any new feature can be added, just create a PR and I will see the rest.
-
-## Installation
-
-### Requirements
-
-* Node.Js installed
+- Added proper error messages
+- Added `refreshAccessToken()`
+- Added `getContents()`, `getRoot()`, `getFolder()`, `rename()`
+- Auto-retry once on 401 using refresh token
+- Better FormData handling
+- Cleaner code structure
