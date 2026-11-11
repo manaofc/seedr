@@ -1,16 +1,72 @@
-const axios = require("axios");
-const FormData = require("form-data");
+"use strict";
+
+const https = require("https");
 
 /**
  * Unofficial Seedr.cc API wrapper
- * Updated & fixed — endpoints still work (oauth_test + chrome/xbmc client ids)
+ * HTTP layer: manaofc-node-fetch (ESM-only → loaded lazily via import(),
+ * so `require("seedr")` keeps working in CommonJS projects).
  */
+
+const BASE = "https://www.seedr.cc";
+const OAUTH_TOKEN = `${BASE}/oauth_test/token.php`;
+const OAUTH_RESOURCE = `${BASE}/oauth_test/resource.php`;
+
+// One shared keep-alive agent → TCP/TLS handshake is paid once, not per request
+const agent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+
+// Load manaofc-node-fetch once and cache the promise
+let fetchLib = null;
+function loadFetch() {
+  if (!fetchLib) fetchLib = import("manaofc-node-fetch");
+  return fetchLib;
+}
+
+/**
+ * Low-level request. Returns { ok, status, data } and never throws on HTTP
+ * errors (fetch doesn't, unlike axios) — callers decide what to do.
+ * @param {string} url
+ * @param {Array<[string, any]>} [fields] if given → multipart POST
+ */
+async function request(url, fields) {
+  const { default: fetch, FormData } = await loadFetch();
+  const init = { agent };
+
+  if (fields) {
+    const form = new FormData();
+    for (const [key, value] of fields) form.append(key, String(value));
+    init.method = "POST";
+    init.body = form; // multipart boundary/header is set automatically
+  }
+
+  const res = await fetch(url, init);
+  const text = await res.text();
+
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+/** Pull a human-readable error out of a response (or null if none) */
+function errorMessage(res) {
+  return (
+    res.data?.error_description ||
+    res.data?.error ||
+    (res.ok ? null : `HTTP ${res.status}`)
+  );
+}
+
 class Seedr {
   constructor() {
     this.token = null;
     this.refreshToken = null;
     this.username = null;
     this.password = null;
+    this._refreshing = null; // shared in-flight refresh (avoids refresh storms)
   }
 
   /**
@@ -21,34 +77,25 @@ class Seedr {
     this.username = username;
     this.password = password;
 
-    const data = new FormData();
-    data.append("grant_type", "password");
-    data.append("client_id", "seedr_chrome");
-    data.append("type", "login");
-    data.append("username", username);
-    data.append("password", password);
-
+    let res;
     try {
-      const res = await axios.post(
-        "https://www.seedr.cc/oauth_test/token.php",
-        data,
-        { headers: data.getHeaders() }
-      );
-
-      if (res.data.error) {
-        throw new Error(res.data.error_description || res.data.error);
-      }
-
-      this.token = res.data.access_token;
-      this.refreshToken = res.data.refresh_token || null;
-      return this.token;
+      res = await request(OAUTH_TOKEN, [
+        ["grant_type", "password"],
+        ["client_id", "seedr_chrome"],
+        ["type", "login"],
+        ["username", username],
+        ["password", password],
+      ]);
     } catch (err) {
-      const msg =
-        err.response?.data?.error_description ||
-        err.response?.data?.error ||
-        err.message;
-      throw new Error(`Login failed: ${msg}`);
+      throw new Error(`Login failed: ${err.message}`);
     }
+
+    const error = errorMessage(res);
+    if (error) throw new Error(`Login failed: ${error}`);
+
+    this.token = res.data.access_token;
+    this.refreshToken = res.data.refresh_token || null;
+    return this.token;
   }
 
   /**
@@ -56,31 +103,33 @@ class Seedr {
    * User must go to https://www.seedr.cc/devices and enter the user_code
    */
   async getDeviceCode() {
+    let res;
     try {
-      const res = await axios.get(
-        "https://www.seedr.cc/api/device/code?client_id=seedr_xbmc"
-      );
-
-      this.devc = res.data.device_code;
-      this.usc = res.data.user_code;
-      this.verificationUrl =
-        res.data.verification_url || "https://www.seedr.cc/devices";
-
-      console.log(
-        `Go to ${this.verificationUrl} and enter this code: ${this.usc}`
-      );
-      console.log(`(device_code: ${this.devc})`);
-
-      return {
-        user_code: this.usc,
-        device_code: this.devc,
-        verification_url: this.verificationUrl,
-        expires_in: res.data.expires_in,
-        interval: res.data.interval,
-      };
+      res = await request(`${BASE}/api/device/code?client_id=seedr_xbmc`);
     } catch (err) {
       throw new Error(`getDeviceCode failed: ${err.message}`);
     }
+
+    const error = errorMessage(res);
+    if (error) throw new Error(`getDeviceCode failed: ${error}`);
+
+    this.devc = res.data.device_code;
+    this.usc = res.data.user_code;
+    this.verificationUrl =
+      res.data.verification_url || "https://www.seedr.cc/devices";
+
+    console.log(
+      `Go to ${this.verificationUrl} and enter this code: ${this.usc}`
+    );
+    console.log(`(device_code: ${this.devc})`);
+
+    return {
+      user_code: this.usc,
+      device_code: this.devc,
+      verification_url: this.verificationUrl,
+      expires_in: res.data.expires_in,
+      interval: res.data.interval,
+    };
   }
 
   /**
@@ -90,25 +139,23 @@ class Seedr {
     const code = deviceCode || this.devc;
     if (!code) throw new Error("device_code is required");
 
+    let res;
     try {
-      const res = await axios.get(
-        `https://www.seedr.cc/api/device/authorize?device_code=${code}&client_id=seedr_xbmc`
+      res = await request(
+        `${BASE}/api/device/authorize?device_code=${encodeURIComponent(
+          code
+        )}&client_id=seedr_xbmc`
       );
-
-      if (res.data.error) {
-        throw new Error(res.data.error_description || res.data.error);
-      }
-
-      this.token = res.data.access_token;
-      this.refreshToken = res.data.refresh_token || null;
-      return this.token;
     } catch (err) {
-      const msg =
-        err.response?.data?.error_description ||
-        err.response?.data?.error ||
-        err.message;
-      throw new Error(`getToken failed: ${msg}`);
+      throw new Error(`getToken failed: ${err.message}`);
     }
+
+    const error = errorMessage(res);
+    if (error) throw new Error(`getToken failed: ${error}`);
+
+    this.token = res.data.access_token;
+    this.refreshToken = res.data.refresh_token || null;
+    return this.token;
   }
 
   /**
@@ -127,81 +174,82 @@ class Seedr {
       throw new Error("No refresh_token available. Login again.");
     }
 
-    const data = new FormData();
-    data.append("grant_type", "refresh_token");
-    data.append("refresh_token", this.refreshToken);
-    data.append("client_id", "seedr_chrome");
-
+    let res;
     try {
-      const res = await axios.post(
-        "https://www.seedr.cc/oauth_test/token.php",
-        data,
-        { headers: data.getHeaders() }
-      );
-
-      if (res.data.error) {
-        throw new Error(res.data.error_description || res.data.error);
-      }
-
-      this.token = res.data.access_token;
-      if (res.data.refresh_token) {
-        this.refreshToken = res.data.refresh_token;
-      }
-      return this.token;
+      res = await request(OAUTH_TOKEN, [
+        ["grant_type", "refresh_token"],
+        ["refresh_token", this.refreshToken],
+        ["client_id", "seedr_chrome"],
+      ]);
     } catch (err) {
-      const msg =
-        err.response?.data?.error_description ||
-        err.response?.data?.error ||
-        err.message;
-      throw new Error(`Token refresh failed: ${msg}`);
+      throw new Error(`Token refresh failed: ${err.message}`);
     }
+
+    const error = errorMessage(res);
+    if (error) throw new Error(`Token refresh failed: ${error}`);
+
+    this.token = res.data.access_token;
+    if (res.data.refresh_token) this.refreshToken = res.data.refresh_token;
+    return this.token;
   }
 
   /**
-   * Internal helper – make authenticated request to resource.php
+   * Internal – run an authenticated request, auto-refreshing the token once
+   * if it expired. Concurrent callers share a single refresh.
+   * @param {() => Promise<{ok:boolean,status:number,data:any}>} send
    */
-  async _resource(func, extra = {}) {
-    if (!this.token) throw new Error("Not logged in. Call login() or addToken() first.");
-
-    const data = new FormData();
-    data.append("access_token", this.token);
-    data.append("func", func);
-
-    for (const [key, value] of Object.entries(extra)) {
-      data.append(key, typeof value === "object" ? JSON.stringify(value) : value);
+  async _authed(send) {
+    if (!this.token) {
+      throw new Error("Not logged in. Call login() or addToken() first.");
     }
 
-    try {
-      const res = await axios.post(
-        "https://www.seedr.cc/oauth_test/resource.php",
-        data,
-        { headers: data.getHeaders() }
-      );
-      return res.data;
-    } catch (err) {
-      // Auto-refresh once if token expired
-      if (
-        this.refreshToken &&
-        (err.response?.status === 401 ||
-          err.response?.data?.error === "access_denied")
-      ) {
-        await this.refreshAccessToken();
-        // retry once
-        const data2 = new FormData();
-        data2.append("access_token", this.token);
-        data2.append("func", func);
-        for (const [key, value] of Object.entries(extra)) {
-          data2.append(key, typeof value === "object" ? JSON.stringify(value) : value);
-        }
-        const res2 = await axios.post(
-          "https://www.seedr.cc/oauth_test/resource.php",
-          data2,
-          { headers: data2.getHeaders() }
-        );
-        return res2.data;
+    let res = await send();
+
+    const expired =
+      res.status === 401 || res.data?.error === "access_denied";
+
+    if (expired && this.refreshToken) {
+      if (!this._refreshing) {
+        this._refreshing = this.refreshAccessToken().finally(() => {
+          this._refreshing = null;
+        });
       }
-      throw err;
+      await this._refreshing;
+      res = await send(); // `send` reads this.token again → uses the new one
     }
+
+    if (!res.ok) {
+      throw new Error(errorMessage(res) || `HTTP ${res.status}`);
+    }
+    return res.data;
+  }
+
+  /**
+   * Internal helper – authenticated POST to resource.php
+   */
+  _resource(func, extra = {}) {
+    return this._authed(() => {
+      const fields = [
+        ["access_token", this.token],
+        ["func", func],
+      ];
+      for (const [key, value] of Object.entries(extra)) {
+        fields.push([
+          key,
+          typeof value === "object" ? JSON.stringify(value) : value,
+        ]);
+      }
+      return request(OAUTH_RESOURCE, fields);
+    });
+  }
+
+  /**
+   * Internal helper – authenticated GET to /api/*
+   */
+  _get(path) {
+    return this._authed(() =>
+      request(`${BASE}/api/${path}?access_token=${encodeURIComponent(this.token)}`)
+    );
   }
 
   /**
@@ -218,35 +266,34 @@ class Seedr {
    * Get root folder contents
    */
   async getRoot() {
-    if (!this.token) throw new Error("Not logged in");
-    const res = await axios.get(
-      `https://www.seedr.cc/api/folder?access_token=${this.token}`
-    );
-    return res.data;
+    return this._get("folder");
   }
 
   /**
    * Get folder by id
    */
   async getFolder(folderId) {
-    if (!this.token) throw new Error("Not logged in");
-    const res = await axios.get(
-      `https://www.seedr.cc/api/folder/${folderId}?access_token=${this.token}`
-    );
-    return res.data;
+    return this._get(`folder/${encodeURIComponent(folderId)}`);
   }
 
   /**
    * Get all video files (same as original getVideos)
-   * Returns array of arrays (one per folder)
+   * Returns array of arrays (one per folder).
+   * Folders are fetched in parallel (was one-by-one before).
    */
   async getVideos() {
     const root = await this.getRoot();
-    const result = [];
 
-    for (const folder of root.folders || []) {
-      const folderData = await this.getFolder(folder.id);
-      const videos = (folderData.files || [])
+    const folders = await Promise.all(
+      (root.folders || []).map(async (folder) => ({
+        folder,
+        data: await this.getFolder(folder.id),
+      }))
+    );
+
+    const result = [];
+    for (const { folder, data } of folders) {
+      const videos = (data.files || [])
         .filter((f) => f.play_video)
         .map((f) => ({
           fid: folder.id,
@@ -284,7 +331,6 @@ class Seedr {
 
   /**
    * Create a ZIP archive of a folder and get download link
-   * This is the link format you asked about:
    * https://www.seedr.cc/download/archive/...?token=...&exp=...
    *
    * @param {string|number} folderId
