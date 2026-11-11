@@ -8,9 +8,8 @@ Fixed & improved version of the original `seedr` package.
 
 **Endpoints still work** (as of Nov 2026). Seedr has not removed the old Chrome / XBMC OAuth endpoints.
 
-## What's new in 1.3.0
+## What's new in 1.0.0
 
-- 🔁 **`axios` and `form-data` removed** — HTTP is now handled by [`manaofc-node-fetch`](https://github.com/manaofc/manaofc-node-fetch) (one dependency instead of two)
 - ⚡ **Faster**
   - Shared **keep-alive** connection → no new TCP/TLS handshake for every request
   - `getVideos()` now loads all folders **in parallel** instead of one by one
@@ -25,12 +24,9 @@ npm install seedr
 npm install manaofc-node-fetch
 ```
 
-> `manaofc-node-fetch` is an **ESM-only** package, but you do **not** need to change anything —
-> this wrapper loads it internally with `import()`, so both of these work:
->
 > ```js
-> const Seedr = require("seedr");   // CommonJS
-> import Seedr from "seedr";        // ESM
+> const Seedr = require("seedr.cc");   // CommonJS
+> import Seedr from "seedr.cc";        // ESM
 > ```
 
 Requires Node.js **16+**.
@@ -38,7 +34,7 @@ Requires Node.js **16+**.
 ## Quick Start
 
 ```js
-const Seedr = require("seedr");
+const Seedr = require("seedr.cc");
 const seedr = new Seedr();
 
 // Method 1: email + password (short lived token)
@@ -79,7 +75,7 @@ await seedr.addToken("your_access_token", "optional_refresh_token");
 ## Example
 
 ```js
-const Seedr = require("seedr");
+const Seedr = require("seedr.cc");
 const seedr = new Seedr();
 
 (async () => {
@@ -131,9 +127,8 @@ once automatically and the request is retried.
 
 ## Changelog
 
-### 1.3.0
+### 1.0.0
 
-- Replaced `axios` + `form-data` with `manaofc-node-fetch` (multipart bodies use its built-in `FormData`)
 - Keep-alive HTTPS agent shared across all requests
 - `getVideos()` fetches folders in parallel
 - Single shared token refresh when several requests expire at once
@@ -141,7 +136,7 @@ once automatically and the request is retried.
 - Token / ids are URL-encoded in GET requests
 - Added README banner image
 
-### 1.2.0
+### 1.0.0
 
 - Added proper error messages
 - Added `refreshAccessToken()`
