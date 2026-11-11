@@ -4,7 +4,7 @@ const https = require("https");
 
 /**
  * Unofficial Seedr.cc API wrapper
- * 𝐬𝐞𝐞𝐝𝐫.𝐜𝐜 𝐜𝐫𝐞𝐚𝐭𝐞𝐝 𝐛𝐲 𝐦𝐚𝐧𝐚𝐨𝐟𝐜 ✨
+ * 𝐬𝐞𝐞𝐝𝐫.𝐜𝐜
  */
 
 const BASE = "https://www.seedr.cc";
